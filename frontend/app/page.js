@@ -8,6 +8,7 @@ export default function Home() {
   const [isSending, setIsSending] = useState(false);
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
   const textareaRef = useRef(null);
+  const bottomRef = useRef(null);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -21,6 +22,10 @@ export default function Home() {
     textarea.style.height = `${nextHeight}px`;
     setIsComposerExpanded(nextHeight > 44);
   }, [input]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isSending]);
 
   async function sendMessage(event) {
     event.preventDefault();
@@ -77,6 +82,16 @@ export default function Home() {
             </div>
           ))
         )}
+
+        {isSending && (
+          <div className="message assistant pending">
+            <span />
+            <span />
+            <span />
+          </div>
+        )}
+
+        <div ref={bottomRef} />
       </div>
 
       <form onSubmit={sendMessage} className="composer">
