@@ -5,12 +5,12 @@ description: AWS Aurora PostgreSQL and Aurora DSQL Python integration using asyn
 
 # AWS Aurora Python Integration
 
-Use `asyncpg` for queries and `boto3` for IAM auth token generation. On Vercel, AWS credentials are obtained via OIDC federation — Vercel injects a `VERCEL_OIDC_TOKEN` at runtime which you exchange for temporary AWS credentials via `sts.assume_role_with_web_identity()`. This is the Python equivalent of `awsCredentialsProvider` from `@vercel/functions/oidc` used in the Node.js skill.
+Use `asyncpg` for queries, `boto3` for IAM auth token generation, and the Vercel Python SDK for OIDC token retrieval. On Vercel, AWS credentials are obtained via OIDC federation: call `get_vercel_oidc_token()` from `vercel.oidc.aio`, then exchange that token for temporary AWS credentials via `sts.assume_role_with_web_identity()`. Do not rely on `VERCEL_OIDC_TOKEN` as an environment variable; it is not available in production runtime.
 
 ## Guidelines
 
 - Use `asyncpg.create_pool()` with the IAM token as the password. Async access avoids blocking FastAPI's event loop.
-- Authenticate via OIDC: call `sts.assume_role_with_web_identity()` with `VERCEL_OIDC_TOKEN` to get temporary credentials, then use those credentials with `rds.generate_db_auth_token()`.
+- Authenticate via OIDC: call `get_vercel_oidc_token()` to get the Vercel OIDC token, pass it to `sts.assume_role_with_web_identity()` to get temporary credentials, then use those credentials with `rds.generate_db_auth_token()`.
 - Use `$1`, `$2` parameter syntax for queries (asyncpg's native format). Never use f-strings for SQL.
 - Enable SSL (`ssl="require"`) — IAM auth requires an encrypted connection.
 - Wrap route handlers in try/except and return clear error JSON. Unhandled errors get buried in deep ASGI stack traces and could lead you in the wrong direction.
@@ -29,6 +29,7 @@ If the target is Aurora DSQL (not standard Aurora PostgreSQL), these PostgreSQL 
 
 - `asyncpg`: async PostgreSQL driver
 - `boto3`: AWS SDK for OIDC credential exchange and IAM token generation
+- `vercel`: Vercel Python SDK for runtime OIDC token retrieval
 
 ## Environment Variables
 
@@ -37,7 +38,6 @@ If the target is Aurora DSQL (not standard Aurora PostgreSQL), these PostgreSQL 
 - `PGDATABASE` — database name (default: `postgres`)
 - `AWS_REGION` — AWS region
 - `AWS_ROLE_ARN` — IAM role to assume via OIDC
-- `VERCEL_OIDC_TOKEN` — auto-injected by Vercel at runtime
 
 ## Setup
 
@@ -45,21 +45,27 @@ If the target is Aurora DSQL (not standard Aurora PostgreSQL), these PostgreSQL 
 import os
 import asyncpg
 import boto3
+from vercel.oidc import decode_oidc_payload
+from vercel.oidc.aio import get_vercel_oidc_token
 
 
-def _get_aws_credentials() -> dict:
+async def _get_aws_credentials() -> dict:
     """Exchange Vercel's OIDC token for temporary AWS credentials."""
+    token = await get_vercel_oidc_token()
+    payload = decode_oidc_payload(token)
+    project_id = payload.get("project_id")
+
     sts = boto3.client("sts", region_name=os.environ["AWS_REGION"])
     resp = sts.assume_role_with_web_identity(
         RoleArn=os.environ["AWS_ROLE_ARN"],
-        RoleSessionName="aurora-fastapi-session",
-        WebIdentityToken=os.environ["VERCEL_OIDC_TOKEN"],
+        RoleSessionName=f"aurora-fastapi-{project_id or 'session'}",
+        WebIdentityToken=token,
     )
     return resp["Credentials"]
 
 
-def generate_auth_token() -> str:
-    creds = _get_aws_credentials()
+async def generate_auth_token() -> str:
+    creds = await _get_aws_credentials()
     client = boto3.client(
         "rds",
         region_name=os.environ["AWS_REGION"],
@@ -84,7 +90,7 @@ async def get_pool() -> asyncpg.Pool:
             host=os.environ["PGHOST"],
             port=5432,
             user=os.environ.get("PGUSER", "postgres"),
-            password=generate_auth_token(),
+            password=await generate_auth_token(),
             database=os.environ.get("PGDATABASE", "postgres"),
             ssl="require",
         )
