@@ -2,6 +2,7 @@
 const nextConfig = {
   allowedDevOrigins: ["*.vercel.run"],
   turbopack: {
+    allowedDevOrigins: ["*.vercel.run"],
     root: __dirname,
   },
 };
