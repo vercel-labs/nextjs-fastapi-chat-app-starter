@@ -25,6 +25,7 @@ yarn-error.log*
 __pycache__
 *.egg-info
 .venv
+backend/.data/
 venv
 env/
 ENV/
@@ -44,3 +45,4 @@ next-env.d.ts
 
 # lockfiles (generated per-machine)
 package-lock.json
+.env*
